@@ -152,7 +152,10 @@ if __name__ == "__main__":
     spte_out = run_speedtest(full_command)
     prep_icinga_out = prepare_monitoring_out(spte_out)
     state = determine_icinga_state(spte_out, args.warning, args.critical)
-    perf_data = performance_data(spte_out, args.warning, args.critical)
-    icinga_out(prep_icinga_out, state, performance_data=perf_data)
+    if args.perfdata is True:
+        perf_data = performance_data(spte_out, args.warning, args.critical)
+        icinga_out(prep_icinga_out, state, performance_data=perf_data)
 
+    else:
+        icinga_out(prep_icinga_out, state)
     # endregion
