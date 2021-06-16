@@ -28,12 +28,12 @@ def run_speedtest(command: str):
 
 def prepare_monitoring_out(speedtest_out: CompletedProcess) -> str:
     output_dict = json.loads(speedtest_out.stdout)
-    output_str: str = "Speedtest to server '{0}' at {1} from client ip '{2}':\n" \
-                      "Ping: {3}ms\n" \
-                      "Jitter: {4}ms\n" \
-                      "Download: {5}\n" \
-                      "Upload: {6}".format(output_dict['server']['name'], output_dict['timestamp'],
-                                           output_dict['client']['ip'], output_dict['ping'],
+    output_str: str = "Speedtest to server '{}' at {} from client ip '{}':\n" \
+                      "Ping: {}ms\n" \
+                      "Jitter: {}ms\n" \
+                      "Download: {}\n" \
+                      "Upload: {}".format(output_dict['server']['name'], output_dict['timestamp'],
+                                           output_dict['client']['ip'], int(output_dict['ping']),
                                            output_dict['jitter'], output_dict['download'],
                                            output_dict['upload'])
 
@@ -60,27 +60,23 @@ def determine_icinga_state(speedtest_out: CompletedProcess, warn_thresholds: str
     jitter_warn = int(warn_list[3])
     jitter_crit = int(crit_list[3])
 
-    #ToDo: Add check if warning thresholds are high/lower as the critical ones
-    if (download_warn > download_crit):
-        if (not download_warn <= 0 and download_crit < download < download_warn) or \
-                (not upload_warn <= 0 and upload_crit < upload < upload_warn) or \
-                (0 < ping_warn < ping < ping_crit) or \
-                (0 < jitter_warn < jitter < jitter_crit):
+    if (not download_warn <= 0 and download_crit < download < download_warn) or \
+            (not upload_warn <= 0 and upload_crit < upload < upload_warn) or \
+            (0 < ping_warn < ping < ping_crit) or \
+            (0 < jitter_warn < jitter < jitter_crit):
 
-            state = WARNING
+        state = WARNING
 
-        if (not download_crit <= 0 and download < download_crit) or \
-                (not upload_crit <= 0 and upload < upload_crit) or \
-                (0 < ping_crit < ping) or \
-                (0 < jitter_crit < jitter):
+    if (not download_crit <= 0 and download < download_crit) or \
+            (not upload_crit <= 0 and upload < upload_crit) or \
+            (0 < ping_crit < ping) or \
+            (0 < jitter_crit < jitter):
 
-            state = CRITICAL
+        state = CRITICAL
 
-        if download > download_warn and upload > upload_warn and (ping < ping_warn or ping_warn <= 0) and \
-                (jitter < jitter_warn or jitter_warn <= 0):
-            state = OK
-    else:
-        pass
+    if download > download_warn and upload > upload_warn and (ping < ping_warn or ping_warn <= 0) and \
+            (jitter < jitter_warn or jitter_warn <= 0):
+        state = OK
 
     return state
 
@@ -134,6 +130,41 @@ def icinga_out(prepared_out: str, determined_state: int, **kwargs):
     exit(determined_state)
 
 
+def check_thresholds(warning: str, critical: str):
+    error = False
+    message = "[UNKNOWN] "
+    warn_list = warning.split(";")
+    crit_list = critical.split(";")
+
+    download_warn = int(warn_list[0])
+    download_crit = int(crit_list[0])
+    upload_warn = int(warn_list[1])
+    upload_crit = int(crit_list[1])
+    ping_warn = int(warn_list[2])
+    ping_crit = int(crit_list[2])
+    jitter_warn = int(warn_list[3])
+    jitter_crit = int(crit_list[3])
+
+    if (download_warn < download_crit and not download_crit <= 0) and not download_warn <= 0:
+        error = True
+        message += " Download warning threshold must be zero or higher than the critical threshold!\n"
+
+    if (upload_warn < upload_crit and not upload_crit <= 0) and not upload_warn <= 0:
+        error = True
+        message += " Upload warning threshold must be zero or higher than the critical threshold!\n"
+
+    if (ping_warn > ping_crit and not ping_crit <= 0) and not ping_warn <= 0:
+        error = True
+        message += " Ping warning threshold must be zero or lower than the critical threshold!\n"
+
+    if (jitter_warn > jitter_crit and not jitter_crit <= 0) and not jitter_warn <= 0:
+        error = True
+        message += " Jitter warning threshold must be zero or lower than the critical threshold!\n"
+
+    if error:
+        print(message)
+        exit(UNKNOWN)
+
 if __name__ == "__main__":
     # region Add arguments
     arguments = argparse.ArgumentParser()
@@ -148,6 +179,7 @@ if __name__ == "__main__":
     args = arguments.parse_args()
     # endregion
     # region Run program
+    check_thresholds(args.warning, args.critical)
     full_command = build_command()
     spte_out = run_speedtest(full_command)
     prep_icinga_out = prepare_monitoring_out(spte_out)
