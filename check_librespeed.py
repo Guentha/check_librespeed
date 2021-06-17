@@ -11,12 +11,22 @@ WARNING = 1
 CRITICAL = 2
 UNKNOWN = 3
 
-
-def build_command(**kwargs) -> str:
+# region Functions
+def build_command(arguments: argparse.Namespace) -> str:
     working_dir = Path(__file__).parent
     command = str(working_dir) + "/Librespeed-cli/librespeed-cli"
-    command += " --secure"
-    command += " --json"
+    if arguments.list is True:
+        command += " --list"
+
+    else:
+        command += " --secure"
+        command += " --json"
+
+        if arguments.server is not None:
+            command += " --server {}".format(arguments.server)
+
+        if arguments.mebibytes is True:
+            command += " --mebibytes"
 
     return command
 
@@ -31,8 +41,8 @@ def prepare_monitoring_out(speedtest_out: CompletedProcess) -> str:
     output_str: str = "Speedtest to server '{}' at {} from client ip '{}':\n" \
                       "Ping: {}ms\n" \
                       "Jitter: {}ms\n" \
-                      "Download: {}\n" \
-                      "Upload: {}".format(output_dict['server']['name'], output_dict['timestamp'],
+                      "Download: {}Mbps\n" \
+                      "Upload: {}Mbps".format(output_dict['server']['name'], output_dict['timestamp'],
                                            output_dict['client']['ip'], int(output_dict['ping']),
                                            output_dict['jitter'], output_dict['download'],
                                            output_dict['upload'])
@@ -81,12 +91,14 @@ def determine_icinga_state(speedtest_out: CompletedProcess, warn_thresholds: str
     return state
 
 
-def performance_data(speedtest_out: CompletedProcess, warn_thresholds: str, crit_thresholds: str) -> str:
+def performance_data(speedtest_out: CompletedProcess, warn_thresholds: str, crit_thresholds: str, mebibytes: bool) -> str:
     speedtest_out_dict = json.loads(speedtest_out.stdout)
     download: float = speedtest_out_dict['download']
     upload: float = speedtest_out_dict['upload']
     ping: float = speedtest_out_dict['ping']
     jitter: float = speedtest_out_dict['jitter']
+    bytes_sent: int = speedtest_out_dict['bytes_sent']
+    bytes_received: int = speedtest_out_dict['bytes_received']
 
     warn_list = warn_thresholds.split(";")
     crit_list = crit_thresholds.split(";")
@@ -101,10 +113,17 @@ def performance_data(speedtest_out: CompletedProcess, warn_thresholds: str, crit
     jitter_crit = int(crit_list[3])
 
     perf_data = " | "
-    perf_data += " 'download'={0}MB;{1}MB;{2}MB;;".format(str(download), str(download_warn), str(download_crit))
-    perf_data += " 'upload'={0}MB;{1}MB;{2}MB;;".format(str(upload), str(upload_warn), str(upload_crit))
-    perf_data += " 'ping'={0}ms;{1}ms;{2}ms;;".format(str(ping), str(ping_warn), str(ping_crit))
+    speed_unit = "MB"
+    if mebibytes is True:
+        speed_unit = "MiB"
+
+    perf_data += " 'download'={0}{3};{1}{3};{2}{3};;".format(str(download), str(download_warn), str(download_crit),
+                                                             speed_unit)
+    perf_data += " 'upload'={0}{3};{1}{3};{2}{3};;".format(str(upload), str(upload_warn), str(upload_crit), speed_unit)
+    perf_data += " 'ping'={0}ms;{1}ms;{2}ms;;".format(str(int(ping)), str(ping_warn), str(ping_crit))
     perf_data += " 'jitter'={0}ms;{1}ms;{2}ms;;".format(str(jitter), str(jitter_warn), str(jitter_crit))
+    perf_data += " 'bytes_sent'={}".format(str(bytes_sent))
+    perf_data += " 'bytes_received'={}".format(str(bytes_received))
 
     return perf_data
 
@@ -164,10 +183,14 @@ def check_thresholds(warning: str, critical: str):
     if error:
         print(message)
         exit(UNKNOWN)
+# endregion
 
+# region Main program
 if __name__ == "__main__":
     # region Add arguments
-    arguments = argparse.ArgumentParser()
+    arguments = argparse.ArgumentParser(prog=Path(__file__).name, usage="%(prog)s [options]",
+                                        description="Nagios/Icinga2 Monitoring script for checking the internet speed."
+                                                    "Values returned in bit/s. Speedtest are performed via HTTPS.")
     arguments.add_argument('-w', '--warning', help="The warning thresholds. Usage: <download>;<upload>;<ping>;<jitter>"
                                                    "Zero disables the check for the given type. Default: 50;20;75;0",
                            type=str, metavar="<download>;<upload>;<ping>;<jitter>", default="50;20;75;0")
@@ -176,18 +199,30 @@ if __name__ == "__main__":
                                 "Zero disables the check for the given type. Default: 25;10;100;0",
                            type=str, metavar="<download>;<upload>;<ping>;<jitter>", default="25;10;100;0")
     arguments.add_argument('--perfdata', help="Create performance data. Default: False", action="store_true")
+    arguments.add_argument('-s', '--server', help="Which server to use for the speedtest. Default choose a random one.",
+                           type=int, metavar="<integer>")
+    arguments.add_argument('-l', '--list', help="List available servers for the speedtest. Default: False",
+                           action="store_true")
+    arguments.add_argument('--mebibytes', help="Use 1024 bytes as 1 kilobyte instead of 1000. Default: False",
+                           action="store_true")
     args = arguments.parse_args()
     # endregion
     # region Run program
-    check_thresholds(args.warning, args.critical)
-    full_command = build_command()
-    spte_out = run_speedtest(full_command)
-    prep_icinga_out = prepare_monitoring_out(spte_out)
-    state = determine_icinga_state(spte_out, args.warning, args.critical)
-    if args.perfdata is True:
-        perf_data = performance_data(spte_out, args.warning, args.critical)
-        icinga_out(prep_icinga_out, state, performance_data=perf_data)
+    full_command = build_command(arguments=args)
 
-    else:
-        icinga_out(prep_icinga_out, state)
+    if args.list is not True:
+        check_thresholds(args.warning, args.critical)
+        spte_out = run_speedtest(full_command)
+        prep_icinga_out = prepare_monitoring_out(spte_out)
+        state = determine_icinga_state(spte_out, args.warning, args.critical)
+        if args.perfdata is True:
+            perf_data = performance_data(spte_out, args.warning, args.critical, args.mebibytes)
+            icinga_out(prep_icinga_out, state, performance_data=perf_data)
+
+        else:
+            icinga_out(prep_icinga_out, state)
+
+    elif args.list is True:
+        print(run_speedtest(full_command).stdout)
     # endregion
+# endregion
