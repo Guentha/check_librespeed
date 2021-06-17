@@ -5,14 +5,21 @@ import json
 import argparse
 from pathlib import Path
 
-# Global variables
+# region Global variables
+# Icinga2 state values
 OK = 0
 WARNING = 1
 CRITICAL = 2
 UNKNOWN = 3
+# endregion
 
 # region Functions
 def build_command(arguments: argparse.Namespace) -> str:
+    """
+    Build the command for the librespeed-cli program.
+    :param arguments: Arguments object.
+    :return: A string with the build command to execute.
+    """
     working_dir = Path(__file__).parent
     command = str(working_dir) + "/Librespeed-cli/librespeed-cli"
     if arguments.list is True:
@@ -31,12 +38,22 @@ def build_command(arguments: argparse.Namespace) -> str:
     return command
 
 
-def run_speedtest(command: str):
+def run_speedtest(command: str) -> CompletedProcess:
+    """
+    Run the previously build command.
+    :param command: The command string to execute.
+    :return: CompletedProcess object.
+    """
     speedtest_output = run(command, stdout=PIPE, stderr=PIPE, universal_newlines=True, shell=True)
     return speedtest_output
 
 
 def prepare_monitoring_out(speedtest_out: CompletedProcess) -> str:
+    """
+    Prepare the output for the monitoring.
+    :param speedtest_out: CompletedProcess object from the subprocess module.
+    :return: A string with the formated monitoring output.
+    """
     output_dict = json.loads(speedtest_out.stdout)
     output_str: str = "Speedtest to server '{}' at {} from client ip '{}':\n" \
                       "Ping: {}ms\n" \
@@ -51,6 +68,13 @@ def prepare_monitoring_out(speedtest_out: CompletedProcess) -> str:
 
 
 def determine_icinga_state(speedtest_out: CompletedProcess, warn_thresholds: str, crit_thresholds: str) -> int:
+    """
+    Checks with which code the program should exit.
+    :param speedtest_out: CompletedProcess object from the subprocess module.
+    :param warn_thresholds: Warning thresholds provided with the arguments in the format "<download>;<upload>;<ping>;<jitter>".
+    :param crit_thresholds: Critical thresholds provided with the arguments in the format "<download>;<upload>;<ping>;<jitter>".
+    :return: An integer with presents the exit code of the program.
+    """
     state = UNKNOWN
     speedtest_out_dict = json.loads(speedtest_out.stdout)
     download: float = speedtest_out_dict['download']
@@ -92,6 +116,14 @@ def determine_icinga_state(speedtest_out: CompletedProcess, warn_thresholds: str
 
 
 def performance_data(speedtest_out: CompletedProcess, warn_thresholds: str, crit_thresholds: str, mebibytes: bool) -> str:
+    """
+    Generate the performance data for the monitoring.
+    :param speedtest_out: CompletedProcess object from the subprocess module.
+    :param warn_thresholds: Warning thresholds provided with the arguments in the format "<download>;<upload>;<ping>;<jitter>".
+    :param crit_thresholds: Critical thresholds provided with the arguments in the format "<download>;<upload>;<ping>;<jitter>".
+    :param mebibytes: A boolean if performance data should returned in MiBs instead of MBs.
+    :return: A formated string to attach to the plugin output.
+    """
     speedtest_out_dict = json.loads(speedtest_out.stdout)
     download: float = speedtest_out_dict['download']
     upload: float = speedtest_out_dict['upload']
@@ -129,6 +161,13 @@ def performance_data(speedtest_out: CompletedProcess, warn_thresholds: str, crit
 
 
 def icinga_out(prepared_out: str, determined_state: int, **kwargs):
+    """
+    Attaches the current state in front of the output and exits the script with the given state and ouput.
+    :param prepared_out: String the plugin should print out.
+    :param determined_state: The state the plugin should return as integer.
+    :param kwargs: If performance data should be attached to the output.
+    :return: Nothing.
+    """
     if determined_state == OK:
         prepared_out = "[OK] " + prepared_out
 
@@ -150,6 +189,12 @@ def icinga_out(prepared_out: str, determined_state: int, **kwargs):
 
 
 def check_thresholds(warning: str, critical: str):
+    """
+    Checks if the provides thresholds are valid.
+    :param warning: The warning threshold string provided with the arguments.
+    :param critical: The critical threshold string provided with the arguments.
+    :return: Nothing.
+    """
     error = False
     message = "[UNKNOWN] "
     warn_list = warning.split(";")
@@ -199,7 +244,8 @@ if __name__ == "__main__":
                                 "Zero disables the check for the given type. Default: 25;10;100;0",
                            type=str, metavar="<download>;<upload>;<ping>;<jitter>", default="25;10;100;0")
     arguments.add_argument('--perfdata', help="Create performance data. Default: False", action="store_true")
-    arguments.add_argument('-s', '--server', help="Which server to use for the speedtest. Default choose a random one.",
+    arguments.add_argument('-s', '--server', help="Which server to use for the speedtest. Provide the number"
+                                                  " listed with the argument '--list'. Default choose a random one.",
                            type=int, metavar="<integer>")
     arguments.add_argument('-l', '--list', help="List available servers for the speedtest. Default: False",
                            action="store_true")
